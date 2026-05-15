@@ -1,0 +1,187 @@
+<div class="app" role="application" aria-label="Math practice">
+  <header class="top">
+    <div>
+      <h1>Math Practice</h1>
+      <div class="subtitle">Adaptive arithmetic practice with live stats and heatmaps</div>
+    </div>
+
+    <div class="controls">
+      <label class="select-wrap">
+        <span>Difficulty</span>
+        <select id="difficulty">
+          <option value="5">1–5</option>
+          <option value="10" selected>1–10</option>
+          <option value="20">1–20</option>
+          <option value="50">1–50</option>
+          <option value="100">1–100</option>
+        </select>
+      </label>
+
+      <label class="select-wrap">
+        <span>Theme</span>
+        <select id="theme">
+          <option value="standard" selected>Standard</option>
+          <option value="dark">Dark</option>
+          <option value="pink">Pink</option>
+        </select>
+      </label>
+
+      <button id="btnNew" type="button" class="secondary" disabled>New Problem</button>
+      <button id="btnReset" type="button" class="secondary">Reset</button>
+    </div>
+  </header>
+
+  <main class="card">
+    <div id="startOverlay" class="overlay" aria-label="Start screen">
+      <div class="overlay-card">
+        <div class="overlay-title">Ready?</div>
+        <div class="overlay-sub">Press START to begin. The timer starts on the first question.</div>
+        <button id="btnStart" class="start-btn" type="button">START</button>
+        <div class="overlay-small">Tip: First the app fills the selected heatmap with new questions. Then it gently favors what you struggle with.</div>
+      </div>
+    </div>
+
+    <section class="option-card" aria-label="Operation selection">
+      <div class="option-head">
+        <h2>Operations</h2>
+        <div class="option-hint">Choose at least one</div>
+      </div>
+
+      <div class="op-buttons" id="opButtons">
+        <button type="button" class="op-toggle active" data-op="+">Addition +</button>
+        <button type="button" class="op-toggle active" data-op="-">Subtraction −</button>
+        <button type="button" class="op-toggle" data-op="*">Multiplication ×</button>
+        <button type="button" class="op-toggle" data-op="/">Division ÷</button>
+      </div>
+    </section>
+
+    <section class="stats" aria-label="Rolling stats">
+      <div class="stat"><div class="k">Stored attempts</div><div id="stTotal" class="v">0</div></div>
+      <div class="stat"><div class="k">Correct</div><div id="stCorrect" class="v">0</div></div>
+      <div class="stat"><div class="k">Wrong</div><div id="stWrong" class="v">0</div></div>
+      <div class="stat"><div class="k">Accuracy</div><div id="stAcc" class="v">0%</div></div>
+      <div class="stat"><div class="k">Avg time</div><div id="stAvg" class="v">—</div></div>
+      <div class="stat"><div class="k">Streak</div><div id="stStreak" class="v">0</div></div>
+      <div class="stat"><div class="k">Best</div><div id="stBest" class="v">0</div></div>
+    </section>
+
+    <div class="problem" aria-live="polite">
+      <span id="lhs" class="num">?</span>
+      <span id="op" class="op">+</span>
+      <span id="rhs" class="num">?</span>
+      <span class="eq">=</span>
+      <span class="qmark">?</span>
+    </div>
+
+    <div id="feedback" class="feedback" aria-live="polite"></div>
+    <div id="answers" class="answers" aria-label="Answer choices"></div>
+
+    <section class="insights-card" aria-label="Strengths and weaknesses">
+      <div class="insights-head">
+        <div>
+          <h2>Strengths &amp; Weaknesses</h2>
+          <div class="section-sub">Filtered by selected difficulty and operations, using stored last five per combo</div>
+        </div>
+        <button id="btnToggleInsights" type="button" class="secondary">Show</button>
+      </div>
+
+      <div id="insights" class="hidden">
+        <div class="mini-grid">
+          <div class="mini">
+            <div class="mini-title">By operation</div>
+            <div id="operationBars" class="bucket-list"></div>
+          </div>
+
+          <div class="mini">
+            <div class="mini-title">By answer range</div>
+            <div id="answerRangeBars" class="bucket-list"></div>
+          </div>
+
+          <div class="mini">
+            <div class="mini-title">By number size</div>
+            <div id="numberSizeBars" class="bucket-list"></div>
+          </div>
+
+          <div class="mini">
+            <div class="mini-title">Most missed</div>
+            <ol id="mostMissed" class="missed-list"></ol>
+          </div>
+        </div>
+
+        <p class="insights-note">
+          Weakness = lower accuracy, slower correct answers, or repeated failed attempts. Adaptive weighting begins only after the selected heatmap is complete.
+        </p>
+      </div>
+    </section>
+
+    <section class="heat-card" aria-label="Heatmaps">
+      <div class="insights-head">
+        <div>
+          <h2>Heatmaps</h2>
+          <div class="section-sub">Green is fast, yellow is slow, orange/red means mixed or failed attempts</div>
+        </div>
+        <button id="btnToggleHeat" type="button" class="secondary">Show</button>
+      </div>
+
+      <div id="heatWrap" class="hidden">
+        <div class="heat-legend">
+          <span class="dot g"></span> ≤3s
+          <span class="dot y"></span> ≥15s
+          <span class="dot o"></span> mixed
+          <span class="dot r"></span> failed
+          <span class="dot n"></span> no data
+        </div>
+
+        <div class="heat-grid">
+          <div class="heat-pane" data-pane-op="+">
+            <div class="mini-title">Addition +</div>
+            <canvas id="heatAdd"></canvas>
+          </div>
+
+          <div class="heat-pane" data-pane-op="-">
+            <div class="mini-title">Subtraction −</div>
+            <canvas id="heatSub"></canvas>
+          </div>
+
+          <div class="heat-pane" data-pane-op="*">
+            <div class="mini-title">Multiplication ×</div>
+            <canvas id="heatMul"></canvas>
+          </div>
+
+          <div class="heat-pane" data-pane-op="/">
+            <div class="mini-title">Division ÷ — centered on divisor</div>
+            <canvas id="heatDiv"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div id="heatTip" class="heat-tip hidden"></div>
+    </section>
+
+    <section class="results" aria-label="Results log">
+      <div class="results-head">
+        <div>
+          <h2>Stored History</h2>
+          <div class="section-sub">Sparse map: each combo keeps the last five values; failed attempts are stored as -1</div>
+        </div>
+
+        <div class="results-actions">
+          <button id="btnToggleResults" type="button" class="secondary">Show</button>
+          <button id="btnCopy" type="button" class="secondary">Copy</button>
+          <button id="btnClearHistory" type="button" class="secondary">Clear Saved</button>
+        </div>
+      </div>
+
+      <div id="resultsWrap" class="hidden">
+        <div class="hint">
+          Format: <code>{ "+:a,b": [ms, ...], "-:a,b": [ms, ...], "*:a,b": [ms, ...], "/:dividend,divisor": [ms, ...] }</code>
+        </div>
+        <pre id="resultsPre" class="pre">{}</pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <small>Adaptive practice for first graders: big buttons, quick feedback, and living statistics 😊</small>
+  </footer>
+</div>
