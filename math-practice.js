@@ -301,18 +301,25 @@
     drawAllCharts();
   }
 
-  function comboWeakness(op, a, b) {
-    const s = comboSummary(op, a, b);
-    if (!s.total) return 0;
-    const accWeak = 1 - s.acc / 100;
-    const timeWeak = s.avgTime == null ? 0 : clamp((s.avgTime - MS_GREEN) / (MS_YELLOW - MS_GREEN), 0, 1);
-    return clamp(accWeak * 0.6 + timeWeak * 0.4, 0, 1);
-  }
-
   function comboWeight(op, a, b) {
-    return (1 + comboWeakness(op, a, b) * 0.18) * (0.97 + Math.random() * 0.06);
-  }
+    const s = comboSummary(op, a, b);
 
+    if (!s.total) return 1;
+
+    const failRate = s.total ? s.wrong / s.total : 0;
+
+    const slowScore = s.avgTime == null
+      ? 0
+      : clamp((s.avgTime - MS_GREEN) / (MS_YELLOW - MS_GREEN), 0, 1);
+
+    const confidence = Math.min(1, s.total / 3);
+
+    const failureBoost = failRate * 0.60 * confidence;
+    const slowBoost = slowScore * 0.30 * confidence;
+    const totalBoost = clamp(failureBoost + slowBoost, 0, 0.85);
+
+    return (1 + totalBoost) * (0.97 + Math.random() * 0.06);
+  }
   function pickNewQuestionFirst(items, maxN) {
     const unseen = items.filter(item => getTimes(item.op, item.a, item.b).length === 0);
     if (!unseen.length) return null;
@@ -347,23 +354,60 @@
 
   function buildChoices(correct, op, maxN) {
     const options = new Set([correct]);
+
     let minAns = 0;
     let maxAns = maxN * maxN;
-    if (op === "+") { minAns = 2; maxAns = maxN * 2; }
-    if (op === "-") { minAns = 0; maxAns = maxN - 1; }
-    if (op === "*") { minAns = 1; maxAns = maxN * maxN; }
-    if (op === "/") { minAns = 1; maxAns = maxN; }
+
+    if (op === "+") {
+      minAns = 2;
+      maxAns = maxN * 2;
+    }
+
+    if (op === "-") {
+      minAns = 0;
+      maxAns = maxN - 1;
+    }
+
+    if (op === "*") {
+      minAns = 1;
+      maxAns = maxN * maxN;
+    }
+
+    if (op === "/") {
+      minAns = 1;
+      maxAns = maxN;
+    }
+
+    // For 1–5, always show only 4 buttons.
+    // For all other difficulties, show up to 8 buttons.
+    const possibleCount = Math.max(1, maxAns - minAns + 1);
+    const wantedCount = maxN === 5 ? 4 : 8;
+    const targetCount = Math.min(wantedCount, possibleCount);
 
     let radius = Math.max(5, Math.round(maxN * 0.25));
     let guard = 0;
-    while (options.size < 8 && guard++ < 500) {
+
+    while (options.size < targetCount && guard++ < 500) {
       let candidate = correct + randInt(-radius, radius);
-      if (op === "*") candidate = correct + randInt(-radius * maxN, radius * maxN);
+
+      if (op === "*") {
+        candidate = correct + randInt(-radius * maxN, radius * maxN);
+      }
+
       candidate = Math.round(candidate);
-      if (candidate >= minAns && candidate <= maxAns) options.add(candidate);
+
+      if (candidate >= minAns && candidate <= maxAns) {
+        options.add(candidate);
+      }
+
       radius = Math.min(radius + 2, Math.max(20, maxN));
     }
-    while (options.size < 8) options.add(randInt(minAns, maxAns));
+
+    // Safe fallback: fills remaining choices without risking an infinite loop.
+    for (let value = minAns; options.size < targetCount && value <= maxAns; value++) {
+      options.add(value);
+    }
+
     return shuffle(Array.from(options));
   }
 
