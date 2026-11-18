@@ -15,8 +15,12 @@
         <div class="subtitle">Changes as you play to help you improve</div>
       </div>
       <div class="controls">
-        <label class="select-wrap"><span>Difficulty</span><select id="difficulty"><option value="5">1–5</option><option value="10" selected>1–10</option><option value="20">1–20</option><option value="50">1–50</option><option value="100">1–100</option></select></label>
-        <div class="op-control"><span>Operations</span><div class="op-buttons" id="opButtons"><button type="button" class="op-toggle active" data-op="+" aria-label="Addition">+</button><button type="button" class="op-toggle active" data-op="-" aria-label="Subtraction">−</button><button type="button" class="op-toggle" data-op="*" aria-label="Multiplication">×</button><button type="button" class="op-toggle" data-op="/" aria-label="Division">÷</button></div></div>
+        <div class="range-control"><span>Numbers</span>
+          <div class="dual-range" id="dualRange"><div class="range-track"><div id="rangeFill" class="range-fill"></div></div><input type="range" id="rangeLo" min="1" max="100" value="1" aria-label="Lowest number"><input type="range" id="rangeHi" min="1" max="100" value="20" aria-label="Highest number"></div>
+          <div class="range-values"><input id="numLo" class="range-num" type="text" inputmode="numeric" value="1" aria-label="Lowest number (click to type)"><span>to</span><input id="numHi" class="range-num" type="text" inputmode="numeric" value="20" aria-label="Highest number (click to type)"></div>
+          <div id="rangeHint" class="range-hint"></div>
+        </div>
+        <div class="op-control"><span>Operations</span><div class="op-buttons" id="opButtons"><button type="button" class="op-toggle active" data-op="+" aria-label="Addition">+</button><button type="button" class="op-toggle active" data-op="-" aria-label="Subtraction">−</button><button type="button" class="op-toggle" data-op="*" aria-label="Multiplication">×</button><button type="button" class="op-toggle" data-op="/" aria-label="Division">÷</button></div><label class="ten-toggle"><input type="checkbox" id="tenOnly"> Cross the ten only</label></div>
         <label class="select-wrap"><span>Theme</span><select id="theme"><option value="standard" selected>Standard</option><option value="dark">Dark</option><option value="pink">Pink</option></select></label>
         <button id="btnSound" type="button" class="secondary">Sound On</button>
       </div>
@@ -24,10 +28,6 @@
 
     <main class="card">
       <div id="startOverlay" class="overlay"><div class="overlay-card"><div class="overlay-title">Ready?</div><div class="overlay-sub">Press START to begin. The timer starts on the first question.</div><button id="btnStart" class="start-btn" type="button">START</button><div class="overlay-small">Tip: The app fills the selected heatmap first, then gently favors what needs practice.</div></div></div>
-
-      <section class="stats" aria-label="Session stats">
-        <div class="stat"><div class="k">Attempts</div><div id="stTotal" class="v">0</div></div><div class="stat"><div class="k">Correct</div><div id="stCorrect" class="v">0</div></div><div class="stat"><div class="k">Wrong</div><div id="stWrong" class="v">0</div></div><div class="stat"><div class="k">Accuracy</div><div id="stAcc" class="v">0%</div></div><div class="stat"><div class="k">Avg time</div><div id="stAvg" class="v">—</div></div><div class="stat"><div class="k">Streak</div><div id="stStreak" class="v">0</div></div>
-      </section>
 
       <div class="problem" aria-live="polite"><span id="lhs">?</span><span id="op" class="op">+</span><span id="rhs">?</span><span class="eq">=</span><span class="qmark">?</span></div>
       <div id="feedback" class="feedback" aria-live="polite"></div>
@@ -39,9 +39,17 @@
         <div class="star-hint">Fill the bar to earn a star. Fast correct answers fill more.</div>
       </div>
 
+      <section class="ledger-card">
+        <div class="section-head"><div><h2>Recent Practice</h2><div class="section-sub">What was practised, and which kinds of problems cause trouble.</div></div><button id="btnToggleLedger" type="button" class="secondary">Show</button></div>
+        <div id="ledgerWrap" class="hidden">
+          <div class="period-buttons" id="periodButtons"><button type="button" class="period active" data-period="session">Last session</button><button type="button" class="period" data-period="today">Today</button><button type="button" class="period" data-period="3d">3 days</button><button type="button" class="period" data-period="7d">7 days</button></div>
+          <div id="ledgerBody"></div>
+        </div>
+      </section>
+
       <section class="heat-card">
         <div class="section-head"><div><h2>Heatmaps</h2><div class="section-sub">Stats, heatmaps and averages clamp long answers to &gt;20s, while raw history keeps the real time.</div></div><button id="btnToggleHeat" type="button" class="secondary">Show</button></div>
-        <div id="heatWrap" class="hidden"><div class="heat-legend"><span class="dot g"></span> ≤3s <span class="dot y"></span> ≥15s <span class="dot o"></span> mixed <span class="dot r"></span> failed <span class="dot n"></span> no data</div><div class="heat-grid"><div class="heat-pane"><div class="mini-title">Addition +</div><canvas id="heatAdd"></canvas></div><div class="heat-pane"><div class="mini-title">Subtraction −</div><canvas id="heatSub"></canvas></div><div class="heat-pane"><div class="mini-title">Multiplication ×</div><canvas id="heatMul"></canvas></div><div class="heat-pane"><div class="mini-title">Division ÷ — by divisor</div><canvas id="heatDiv"></canvas></div></div></div>
+        <div id="heatWrap" class="hidden"><div class="heat-legend"><span class="dot g"></span> ≤3s <span class="dot y"></span> ≥15s <span class="dot o"></span> mixed <span class="dot r"></span> failed <span class="dot n"></span> no data</div><div class="heat-grid"><div class="heat-pane"><div class="mini-title">Addition + <span>rows: answer · columns: second number</span></div><canvas id="heatAdd"></canvas></div><div class="heat-pane"><div class="mini-title">Subtraction − <span>rows: start number · columns: take away</span></div><canvas id="heatSub"></canvas></div><div class="heat-pane"><div class="mini-title">Multiplication × <span>rows: table · columns: times</span></div><canvas id="heatMul"></canvas></div><div class="heat-pane"><div class="mini-title">Division ÷ <span>rows: divide by · columns: answer</span></div><canvas id="heatDiv"></canvas></div></div></div>
         <div id="heatTip" class="heat-tip hidden"></div>
       </section>
 

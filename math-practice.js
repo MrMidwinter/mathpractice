@@ -6,10 +6,15 @@
   // ---------------------------------------------------------------------------
 
   const STORAGE_KEY = "mathPractice_hist_v3";
+  const LOG_KEY = "mathPractice_log_v1";
+  const SETTINGS_KEY = "mathPractice_settings_v1";
   const THEME_KEY = "mathPractice_theme_v1";
   const SOUND_KEY = "mathPractice_sound_v1";
 
   const MAX_KEEP_PER_COMBO = 5;
+  const MAX_LOG = 5000;
+  const SESSION_GAP_MS = 20 * 60 * 1000;
+
   const MS_GREEN = 3000;
   const MS_YELLOW = 15000;
   const SCORE_CAP_MS = 20000;
@@ -20,6 +25,10 @@
   const MAX_GAIN = 1 / 3;
   const MIN_GAIN = 0.05;
   const WRONG_PENALTY = 0.25;
+
+  const RANGE_MIN = 1;
+  const RANGE_MAX = 100;
+  const TABLE_LEN = 10;
 
   const OPS = {
     "+": { symbol: "+" },
@@ -55,6 +64,12 @@
       ? Math.round(nums.reduce((sum, n) => sum + n, 0) / nums.length)
       : null;
 
+  const range = (from, to) => {
+    const out = [];
+    for (let i = from; i <= to; i++) out.push(i);
+    return out;
+  };
+
   function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -71,6 +86,20 @@
     } catch {
       return fallback;
     }
+  }
+
+  function storageGet(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function storageSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {}
   }
 
   function weightedPick(items, weights) {
@@ -107,7 +136,14 @@
     btnClearHistory: $("btnClearHistory"),
     btnSound: $("btnSound"),
 
-    difficulty: $("difficulty"),
+    rangeLo: $("rangeLo"),
+    rangeHi: $("rangeHi"),
+    numLo: $("numLo"),
+    numHi: $("numHi"),
+    rangeFill: $("rangeFill"),
+    rangeHint: $("rangeHint"),
+    tenOnly: $("tenOnly"),
+
     theme: $("theme"),
     opButtons: $("opButtons"),
 
@@ -121,12 +157,10 @@
     starFill: $("starFill"),
     starGhost: $("starGhost"),
 
-    stTotal: $("stTotal"),
-    stCorrect: $("stCorrect"),
-    stWrong: $("stWrong"),
-    stAcc: $("stAcc"),
-    stAvg: $("stAvg"),
-    stStreak: $("stStreak"),
+    btnToggleLedger: $("btnToggleLedger"),
+    ledgerWrap: $("ledgerWrap"),
+    ledgerBody: $("ledgerBody"),
+    periodButtons: $("periodButtons"),
 
     btnToggleHeat: $("btnToggleHeat"),
     heatWrap: $("heatWrap"),
@@ -143,32 +177,26 @@
     historySub: $("historySub")
   };
 
-  const ctx = {
-    add: els.heatAdd.getContext("2d"),
-    sub: els.heatSub.getContext("2d"),
-    mul: els.heatMul.getContext("2d"),
-    div: els.heatDiv.getContext("2d")
-  };
-
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
 
   let started = false;
-  let streak = 0;
   let current = null;
   let prevProblemKey = null;
   let startTime = 0;
 
-  let sessionAttempts = [];
   let sessionStars = 0;
   let starProgress = 0;
 
-  let soundOn = localStorage.getItem(SOUND_KEY) !== "off";
+  let soundOn = storageGet(SOUND_KEY) !== "off";
   let audioEl = null;
-  let rewardRaf = null;
+
+  let ledgerPeriod = "session";
+  let tenFallback = false;
 
   const histMap = loadHistMap();
+  const log = loadLog();
 
   // ---------------------------------------------------------------------------
   // Time / scoring
@@ -192,15 +220,15 @@
     if (ms == null) return "—";
     if (isFail(ms)) return "failed";
     if (ms >= SCORE_CAP_MS) return ">20s";
-    return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(2)} s`;
+    return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
   }
 
   // ---------------------------------------------------------------------------
-  // Storage
+  // Storage: per-problem history (drives the adaptive picking + heatmaps)
   // ---------------------------------------------------------------------------
 
   function loadHistMap() {
-    const parsed = safeParse(localStorage.getItem(STORAGE_KEY), null);
+    const parsed = safeParse(storageGet(STORAGE_KEY), null);
     let data = null;
 
     if (parsed?.v === 3 && parsed.data && typeof parsed.data === "object") {
@@ -228,22 +256,44 @@
   }
 
   function saveHistMap() {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          v: 3,
-          data: Object.fromEntries(histMap.entries())
-        })
-      );
-    } catch {}
+    storageSet(
+      STORAGE_KEY,
+      JSON.stringify({ v: 3, data: Object.fromEntries(histMap.entries()) })
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Storage: timestamped log of every answer (drives the Recent Practice ledger)
+  // Entry: [timestamp, op, a, b, givenAnswer, ms]
+  // ---------------------------------------------------------------------------
+
+  function loadLog() {
+    const parsed = safeParse(storageGet(LOG_KEY), []);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(e =>
+      Array.isArray(e) && e.length >= 6 && OPS[e[1]] && Number.isFinite(e[0])
+    );
+  }
+
+  function saveLog() {
+    if (log.length > MAX_LOG) log.splice(0, log.length - MAX_LOG);
+    storageSet(LOG_KEY, JSON.stringify(log));
+  }
+
+  function logEntry(e) {
+    const [t, op, a, b, ans, ms] = e;
+    const correct = correctFor(op, a, b);
+    return { t, op, a, b, ans, ms, correct, ok: ans === correct };
   }
 
   function clearHistory() {
     histMap.clear();
+    log.length = 0;
 
     try {
       localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(LOG_KEY);
     } catch {}
   }
 
@@ -251,23 +301,8 @@
   // Problem keys / history lookup
   // ---------------------------------------------------------------------------
 
-  function canonicalPair(op, a, b) {
-    return op === "-" && a < b ? [b, a] : [a, b];
-  }
-
   function keyFor(op, a, b) {
-    const [x, y] = canonicalPair(op, a, b);
-    return `${op}:${x},${y}`;
-  }
-
-  function parseKey(key) {
-    const [op, pair] = key.split(":");
-    if (!pair || !OPS[op]) return null;
-
-    const [a, b] = pair.split(",").map(Number);
-    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
-
-    return { op, a, b };
+    return `${op}:${a},${b}`;
   }
 
   function getTimes(op, a, b) {
@@ -278,29 +313,27 @@
       : [];
   }
 
-  function setTimes(op, a, b, times) {
-    histMap.set(keyFor(op, a, b), times.slice(-MAX_KEEP_PER_COMBO));
-  }
-
-  function recordAttempt(op, a, b, ok, elapsedMs) {
+  function recordAttempt(op, a, b, given, elapsedMs) {
+    const ok = given === correctFor(op, a, b);
     const times = getTimes(op, a, b);
 
     times.push(ok ? elapsedMs : FAIL_TIME);
-
-    while (times.length > MAX_KEEP_PER_COMBO) {
-      times.shift();
-    }
-
-    setTimes(op, a, b, times);
+    histMap.set(keyFor(op, a, b), times.slice(-MAX_KEEP_PER_COMBO));
     saveHistMap();
+
+    log.push([Date.now(), op, a, b, given, elapsedMs]);
+    saveLog();
   }
 
   // ---------------------------------------------------------------------------
-  // Operations / question generation
+  // Settings: number range, operations, cross-the-ten
   // ---------------------------------------------------------------------------
 
-  function getMaxN() {
-    return Number(els.difficulty.value) || 10;
+  function getRange() {
+    return {
+      lo: Number(els.rangeLo.value),
+      hi: Number(els.rangeHi.value)
+    };
   }
 
   function getSelectedOps() {
@@ -313,6 +346,76 @@
     return active.length ? active : ["+"];
   }
 
+  function saveSettings() {
+    const { lo, hi } = getRange();
+
+    storageSet(SETTINGS_KEY, JSON.stringify({
+      lo,
+      hi,
+      ops: getSelectedOps(),
+      tenOnly: els.tenOnly.checked
+    }));
+  }
+
+  function loadSettings() {
+    const s = safeParse(storageGet(SETTINGS_KEY), null);
+    if (!s) return;
+
+    if (Number.isFinite(s.lo) && Number.isFinite(s.hi)) {
+      setRange(s.lo, s.hi);
+    }
+
+    if (Array.isArray(s.ops) && s.ops.length) {
+      els.opButtons.querySelectorAll(".op-toggle").forEach(btn => {
+        btn.classList.toggle("active", s.ops.includes(btn.dataset.op));
+      });
+    }
+
+    els.tenOnly.checked = !!s.tenOnly;
+  }
+
+  function setRange(lo, hi) {
+    lo = clamp(Math.round(lo), RANGE_MIN, RANGE_MAX);
+    hi = clamp(Math.round(hi), RANGE_MIN, RANGE_MAX);
+    if (lo > hi) [lo, hi] = [hi, lo];
+
+    els.rangeLo.value = lo;
+    els.rangeHi.value = hi;
+    renderRangeUi();
+  }
+
+  function renderRangeUi() {
+    const { lo, hi } = getRange();
+    const span = RANGE_MAX - RANGE_MIN;
+
+    if (document.activeElement !== els.numLo) els.numLo.value = lo;
+    if (document.activeElement !== els.numHi) els.numHi.value = hi;
+
+    els.rangeFill.style.left = `${((lo - RANGE_MIN) / span) * 100}%`;
+    els.rangeFill.style.right = `${100 - ((hi - RANGE_MIN) / span) * 100}%`;
+
+    // When the thumbs overlap, keep on top the one that can still move.
+    els.rangeLo.style.zIndex = lo > (RANGE_MIN + RANGE_MAX) / 2 ? 3 : 1;
+    els.rangeHi.style.zIndex = 2;
+
+    const r = lo === hi ? `${lo}` : `${lo}–${hi}`;
+    const parts = [];
+    const ops = getSelectedOps();
+
+    if (ops.includes("+")) parts.push(`+ answers ${r}`);
+    if (ops.includes("-")) parts.push(`− from ${r}`);
+    if (ops.includes("*")) parts.push(`× tables ${r}`);
+    if (ops.includes("/")) parts.push(`÷ by ${r}`);
+
+    let hint = parts.join(" · ");
+    if (tenFallback) hint += " · (no cross-the-ten problems in this range)";
+    els.rangeHint.textContent = hint;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Operations / question generation
+  // ---------------------------------------------------------------------------
+
   function correctFor(op, a, b) {
     if (op === "+") return a + b;
     if (op === "-") return a - b;
@@ -320,53 +423,78 @@
     return a / b;
   }
 
-  function allPairsFor(op, maxN) {
+  // Crossing the ten: 8+5, 16−7 (ones digits need carrying / borrowing).
+  function crossesTen(op, a, b) {
+    if (op === "+") return (a % 10) + (b % 10) >= 10;
+    if (op === "-") return (a % 10) < (b % 10);
+    return true;
+  }
+
+  // The range controls the "starting number":
+  //   +  the answer (sum)          −  the number subtracted from
+  //   ×  the times table           ÷  the number divided by
+  function pairsFor(op, lo, hi) {
     const pairs = [];
 
-    if (op === "+" || op === "*") {
-      for (let a = 1; a <= maxN; a++) {
-        for (let b = 1; b <= maxN; b++) {
-          pairs.push([a, b]);
-        }
+    if (op === "+") {
+      for (let sum = Math.max(lo, 2); sum <= Math.max(hi, 2); sum++) {
+        for (let b = 1; b < sum; b++) pairs.push([sum - b, b]);
       }
-    }
-
-    if (op === "-") {
-      for (let a = 1; a <= maxN; a++) {
-        for (let b = 1; b <= a; b++) {
-          pairs.push([a, b]);
-        }
+    } else if (op === "-") {
+      for (let a = lo; a <= hi; a++) {
+        for (let b = 1; b <= a; b++) pairs.push([a, b]);
       }
-    }
-
-    if (op === "/") {
-      for (let divisor = 1; divisor <= maxN; divisor++) {
-        for (let quotient = 1; quotient <= maxN; quotient++) {
-          pairs.push([divisor * quotient, divisor]);
-        }
+    } else if (op === "*") {
+      for (let t = lo; t <= hi; t++) {
+        for (let f = 1; f <= TABLE_LEN; f++) pairs.push([f, t]);
+      }
+    } else if (op === "/") {
+      for (let t = lo; t <= hi; t++) {
+        for (let q = 1; q <= TABLE_LEN; q++) pairs.push([t * q, t]);
       }
     }
 
     return pairs;
   }
 
-  function selectedQuestionSet(maxN) {
-    return getSelectedOps().flatMap(op =>
-      allPairsFor(op, maxN).map(([a, b]) => ({ op, a, b }))
+  function selectedQuestionSet() {
+    const { lo, hi } = getRange();
+    const ops = getSelectedOps();
+    const all = ops.flatMap(op =>
+      pairsFor(op, lo, hi).map(([a, b]) => ({ op, a, b }))
     );
+
+    tenFallback = false;
+    if (!els.tenOnly.checked) return all;
+
+    const filtered = all.filter(q => crossesTen(q.op, q.a, q.b));
+
+    if (!filtered.length) {
+      tenFallback = true;
+      return all;
+    }
+
+    return filtered;
+  }
+
+  function summarize(times) {
+    const attempts = times.map(ms => ({ ms, ok: !isFail(ms) }));
+    const total = attempts.length;
+    const correct = attempts.filter(x => x.ok).length;
+    const wrong = total - correct;
+
+    return {
+      total,
+      correct,
+      wrong,
+      acc: pct(correct, total),
+      failRate: total ? wrong / total : 0,
+      avgTime: avg(attempts.filter(x => x.ok).map(x => scoredMs(x.ms)))
+    };
   }
 
   function comboSummary(op, a, b) {
-    const attempts = getTimes(op, a, b).map(ms => ({
-      ms,
-      scored: scoredMs(ms),
-      ok: !isFail(ms)
-    }));
-
-    const summary = attemptSummary(attempts);
-    summary.failRate = summary.total ? summary.wrong / summary.total : 0;
-
-    return summary;
+    return summarize(getTimes(op, a, b));
   }
 
   function comboWeight(op, a, b) {
@@ -374,7 +502,6 @@
 
     if (!summary.total) return 1;
 
-    const failRate = summary.wrong / summary.total;
     const slowScore =
       summary.avgTime == null
         ? 0
@@ -382,7 +509,7 @@
 
     const confidence = Math.min(1, summary.total / 3);
     const boost = clamp(
-      failRate * 0.6 * confidence + slowScore * 0.3 * confidence,
+      summary.failRate * 0.6 * confidence + slowScore * 0.3 * confidence,
       0,
       0.85
     );
@@ -390,7 +517,7 @@
     return (1 + boost) * (0.97 + Math.random() * 0.06);
   }
 
-  function pickNewQuestionFirst(items, maxN) {
+  function pickNewQuestionFirst(items) {
     const unseen = items.filter(item =>
       getTimes(item.op, item.a, item.b).length === 0
     );
@@ -399,148 +526,63 @@
 
     for (let i = 0; i < 20; i++) {
       const candidate = unseen[randInt(0, unseen.length - 1)];
-      const key = `${keyFor(candidate.op, candidate.a, candidate.b)}:${maxN}`;
+      const key = keyFor(candidate.op, candidate.a, candidate.b);
 
-      if (key !== prevProblemKey || unseen.length === 1) {
-        return candidate;
-      }
+      if (key !== prevProblemKey || unseen.length === 1) return candidate;
     }
 
     return unseen[randInt(0, unseen.length - 1)];
   }
 
   function makeProblem() {
-    const maxN = getMaxN();
-    const items = selectedQuestionSet(maxN);
-
-    let picked = pickNewQuestionFirst(items, maxN);
+    const items = selectedQuestionSet();
+    let picked = pickNewQuestionFirst(items);
 
     if (!picked) {
-      const weights = items.map(item =>
-        comboWeight(item.op, item.a, item.b)
-      );
-
+      const weights = items.map(item => comboWeight(item.op, item.a, item.b));
       picked = weightedPick(items, weights);
 
       for (let i = 0; i < 14; i++) {
-        const key = `${keyFor(picked.op, picked.a, picked.b)}:${maxN}`;
-        if (key !== prevProblemKey) break;
-
+        if (keyFor(picked.op, picked.a, picked.b) !== prevProblemKey) break;
         picked = weightedPick(items, weights);
       }
     }
 
-    prevProblemKey = `${keyFor(picked.op, picked.a, picked.b)}:${maxN}`;
+    prevProblemKey = keyFor(picked.op, picked.a, picked.b);
 
     return {
       op: picked.op,
       a: picked.a,
       b: picked.b,
-      correct: correctFor(picked.op, picked.a, picked.b),
-      maxN
+      correct: correctFor(picked.op, picked.a, picked.b)
     };
   }
 
-  function buildChoices(correct, op, maxN) {
+  // Wrong choices include the classic slips (off by one, off by ten, the
+  // neighbouring table answer) so mistakes tell us something.
+  function buildChoices({ op, a, b, correct }) {
+    const targetCount = 8;
     const options = new Set([correct]);
+    const valid = v => Number.isInteger(v) && v >= 0 && v !== correct;
 
-    let minAns = 0;
-    let maxAns = maxN * maxN;
+    let likely;
+    if (op === "*") likely = [correct + b, correct - b, correct + a, correct - a, correct + 1, correct - 1, correct + 10, correct - 10];
+    else if (op === "/") likely = [correct + 1, correct - 1, correct + 2, correct - 2];
+    else likely = [correct + 1, correct - 1, correct + 10, correct - 10, correct + 2, correct - 2];
 
-    if (op === "+") {
-      minAns = 2;
-      maxAns = maxN * 2;
-    } else if (op === "-") {
-      minAns = 0;
-      maxAns = maxN - 1;
-    } else if (op === "*") {
-      minAns = 1;
-      maxAns = maxN * maxN;
-    } else if (op === "/") {
-      minAns = 1;
-      maxAns = maxN;
-    }
+    shuffle(likely.filter(valid))
+      .slice(0, 4)
+      .forEach(v => options.add(v));
 
-    const targetCount = Math.min(
-      maxN === 5 ? 4 : 8,
-      Math.max(1, maxAns - minAns + 1)
-    );
-
-    let radius = Math.max(5, Math.round(maxN * 0.25));
+    const radius = op === "*" ? Math.max(10, b * 3) : Math.max(5, Math.round(correct * 0.3));
     let guard = 0;
 
     while (options.size < targetCount && guard++ < 500) {
-      let candidate =
-        op === "*"
-          ? correct + randInt(-radius * maxN, radius * maxN)
-          : correct + randInt(-radius, radius);
-
-      candidate = Math.round(candidate);
-
-      if (candidate >= minAns && candidate <= maxAns) {
-        options.add(candidate);
-      }
-
-      radius = Math.min(radius + 2, Math.max(20, maxN));
-    }
-
-    for (let value = minAns; options.size < targetCount && value <= maxAns; value++) {
-      options.add(value);
+      const candidate = correct + randInt(-radius, radius);
+      if (candidate >= 0) options.add(candidate);
     }
 
     return shuffle(Array.from(options));
-  }
-
-  // ---------------------------------------------------------------------------
-  // Attempts / stats
-  // ---------------------------------------------------------------------------
-
-  function attemptSummary(list) {
-    const total = list.length;
-    const correct = list.filter(x => x.ok).length;
-    const wrong = total - correct;
-    const times = list
-      .filter(x => x.ok)
-      .map(x => x.scored ?? scoredMs(x.ms));
-
-    return {
-      total,
-      correct,
-      wrong,
-      acc: pct(correct, total),
-      avgTime: avg(times)
-    };
-  }
-
-  function heatmapCompletion(maxN) {
-    const items = selectedQuestionSet(maxN);
-    const filled = items.filter(item =>
-      getTimes(item.op, item.a, item.b).length > 0
-    ).length;
-
-    return {
-      total: items.length,
-      filled,
-      complete: items.length > 0 && filled >= items.length
-    };
-  }
-
-  function renderStats() {
-    const summary = attemptSummary(sessionAttempts);
-    const completion = heatmapCompletion(getMaxN());
-
-    els.stTotal.textContent = summary.total;
-    els.stCorrect.textContent = summary.correct;
-    els.stWrong.textContent = summary.wrong;
-    els.stAcc.textContent = `${summary.acc}%`;
-    els.stAvg.textContent = fmtMs(summary.avgTime);
-    els.stStreak.textContent = streak;
-
-    els.historySub.textContent = completion.complete
-      ? "Heatmap complete. Adaptive weighting is active. Raw times are stored; stats clamp at >20s."
-      : `Filling heatmap: ${completion.filled} / ${completion.total} combinations have data. Raw times are stored; stats clamp at >20s.`;
-
-    drawAllCharts();
   }
 
   // ---------------------------------------------------------------------------
@@ -550,18 +592,18 @@
   function setFeedback(message, type) {
     els.feedback.textContent = message || "";
     els.feedback.classList.remove("good", "bad");
+    if (type) els.feedback.classList.add(type);
+  }
 
-    if (type) {
-      els.feedback.classList.add(type);
-    }
+  function flash(message, type) {
+    setFeedback(message, type);
+    setTimeout(() => setFeedback("", null), 900);
   }
 
   function lockButtons() {
-    els.answers
-      .querySelectorAll("button")
-      .forEach(btn => {
-        btn.disabled = true;
-      });
+    els.answers.querySelectorAll("button").forEach(btn => {
+      btn.disabled = true;
+    });
   }
 
   function renderResults() {
@@ -570,6 +612,13 @@
       null,
       2
     );
+
+    const items = selectedQuestionSet();
+    const filled = items.filter(i => getTimes(i.op, i.a, i.b).length > 0).length;
+
+    els.historySub.textContent = filled >= items.length
+      ? "Every problem in the range has been tried. The app now favours the ones that need practice."
+      : `Trying every problem once first: ${filled} / ${items.length} done. Raw times are stored; failed = -1.`;
   }
 
   function applyTheme(theme) {
@@ -579,10 +628,7 @@
     if (theme === "pink") document.body.classList.add("theme-pink");
 
     els.theme.value = theme;
-
-    try {
-      localStorage.setItem(THEME_KEY, theme);
-    } catch {}
+    storageSet(THEME_KEY, theme);
 
     drawAllCharts();
   }
@@ -667,7 +713,7 @@
 
   function rewardLoop() {
     renderRewardCluster();
-    rewardRaf = requestAnimationFrame(rewardLoop);
+    requestAnimationFrame(rewardLoop);
   }
 
   // ---------------------------------------------------------------------------
@@ -688,16 +734,14 @@
   }
 
   function mixedColor(summary) {
-    if (!summary.total) return "rgba(255,255,255,0.06)";
+    if (!summary.total) return "rgba(128,128,128,0.14)";
     if (summary.wrong === summary.total) {
       return lerpColor(COLORS.orange, COLORS.red, 0.85);
     }
 
     const base = baseTimeRgb(summary.avgTime) || COLORS.yellow;
 
-    if (!summary.failRate) {
-      return lerpColor(base, base, 0);
-    }
+    if (!summary.failRate) return lerpColor(base, base, 0);
 
     return lerpColor(
       base,
@@ -707,197 +751,145 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Heatmap drawing
+  // Heatmap drawing: one grid per operation, rows follow the selected range.
   // ---------------------------------------------------------------------------
 
-  function resizeCanvas(canvas, context) {
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    const size = Math.floor(Math.min(rect.width, rect.height) * dpr);
+  function gridSpec(op) {
+    const { lo, hi } = getRange();
 
-    if (canvas.width !== size || canvas.height !== size) {
-      canvas.width = size;
-      canvas.height = size;
+    if (op === "+") {
+      const rows = range(Math.max(lo, 2), Math.max(hi, 2));
+      return {
+        rows,
+        cols: range(1, rows[rows.length - 1] - 1),
+        cell: (sum, b) => (b < sum ? { a: sum - b, b } : null)
+      };
     }
 
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.scale(dpr, dpr);
+    if (op === "-") {
+      return {
+        rows: range(lo, hi),
+        cols: range(1, hi),
+        cell: (a, b) => (b <= a ? { a, b } : null)
+      };
+    }
+
+    if (op === "*") {
+      return {
+        rows: range(lo, hi),
+        cols: range(1, TABLE_LEN),
+        cell: (t, f) => ({ a: f, b: t })
+      };
+    }
 
     return {
-      w: rect.width,
-      h: rect.height
+      rows: range(lo, hi),
+      cols: range(1, TABLE_LEN),
+      cell: (t, q) => ({ a: t * q, b: t })
     };
   }
 
-  function axisStep(maxN) {
-    if (maxN <= 20) return 1;
-    if (maxN <= 50) return 5;
-    return 10;
+  function labelStep(count, px, minPx) {
+    return Math.max(1, Math.ceil(count / Math.max(1, px / minPx)));
   }
 
-  function drawPairHeatmap(canvas, context, op) {
+  function drawHeatmap(canvas, op) {
     const pane = canvas.closest(".heat-pane");
     const visible = getSelectedOps().includes(op);
 
-    if (pane) {
-      pane.style.display = visible ? "" : "none";
-    }
+    if (pane) pane.style.display = visible ? "" : "none";
+    if (!visible || els.heatWrap.classList.contains("hidden")) return;
 
-    if (!visible) return;
+    const spec = gridSpec(op);
+    const padL = 30;
+    const padT = 4;
+    const padR = 4;
+    const padB = 20;
 
-    const maxN = getMaxN();
-    const { w, h } = resizeCanvas(canvas, context);
+    const w = canvas.getBoundingClientRect().width;
+    const cellW = (w - padL - padR) / spec.cols.length;
+    const h = clamp(spec.rows.length * cellW, 60, 460) + padT + padB;
 
+    canvas.style.height = `${h}px`;
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+
+    const context = canvas.getContext("2d");
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
     context.clearRect(0, 0, w, h);
-    context.fillStyle = "rgba(255,255,255,0.03)";
-    context.fillRect(0, 0, w, h);
 
-    const pad = 26;
-    const gridW = w - pad - 6;
-    const gridH = h - pad - 6;
-    const cellW = gridW / maxN;
-    const cellH = gridH / maxN;
+    const cellH = (h - padT - padB) / spec.rows.length;
 
-    for (let a = 1; a <= maxN; a++) {
-      for (let b = 1; b <= maxN; b++) {
-        if (op === "-" && a < b) continue;
+    spec.rows.forEach((r, ri) => {
+      spec.cols.forEach((c, ci) => {
+        const pair = spec.cell(r, c);
+        if (!pair) return;
 
-        context.fillStyle = mixedColor(comboSummary(op, a, b));
+        context.fillStyle = mixedColor(comboSummary(op, pair.a, pair.b));
         context.fillRect(
-          pad + (b - 1) * cellW,
-          4 + (a - 1) * cellH,
+          padL + ci * cellW,
+          padT + ri * cellH,
           Math.max(1, cellW - 1),
           Math.max(1, cellH - 1)
         );
-      }
-    }
+      });
+    });
 
-    context.fillStyle = "rgba(255,255,255,.58)";
+    context.fillStyle = getComputedStyle(document.body).getPropertyValue("--muted") || "#999";
     context.font = "11px system-ui";
     context.textAlign = "center";
     context.textBaseline = "middle";
 
-    for (let i = 1; i <= maxN; i += axisStep(maxN)) {
-      context.fillText(String(i), pad + (i - 0.5) * cellW, h - pad / 2);
-      context.fillText(String(i), pad / 2, 4 + (i - 0.5) * cellH);
-    }
-  }
-
-  function drawDivisionGraph() {
-    const pane = els.heatDiv.closest(".heat-pane");
-    const visible = getSelectedOps().includes("/");
-
-    if (pane) {
-      pane.style.display = visible ? "" : "none";
-    }
-
-    if (!visible) return;
-
-    const maxN = getMaxN();
-    const { w, h } = resizeCanvas(els.heatDiv, ctx.div);
-
-    ctx.div.clearRect(0, 0, w, h);
-    ctx.div.fillStyle = "rgba(255,255,255,0.03)";
-    ctx.div.fillRect(0, 0, w, h);
-
-    const padL = 34;
-    const padT = 12;
-    const padR = 10;
-    const padB = 30;
-
-    const chartW = w - padL - padR;
-    const chartH = h - padT - padB;
-    const barW = chartW / maxN;
-
-    for (let divisor = 1; divisor <= maxN; divisor++) {
-      let times = [];
-
-      for (let quotient = 1; quotient <= maxN; quotient++) {
-        times = times.concat(getTimes("/", divisor * quotient, divisor));
+    const colStep = labelStep(spec.cols.length, w - padL - padR, 20);
+    spec.cols.forEach((c, ci) => {
+      if (ci % colStep === 0) {
+        context.fillText(String(c), padL + (ci + 0.5) * cellW, h - padB / 2);
       }
+    });
 
-      const summary = attemptSummary(
-        times.map(ms => ({
-          ms,
-          scored: scoredMs(ms),
-          ok: !isFail(ms)
-        }))
-      );
+    const rowStep = labelStep(spec.rows.length, h - padT - padB, 14);
+    spec.rows.forEach((r, ri) => {
+      if (ri % rowStep === 0) {
+        context.fillText(String(r), padL / 2, padT + (ri + 0.5) * cellH);
+      }
+    });
 
-      const failRate = summary.total
-        ? summary.wrong / summary.total
-        : 0;
-
-      const height = summary.avgTime == null
-        ? 0
-        : clamp(summary.avgTime, 0, MS_YELLOW) / MS_YELLOW;
-
-      const barH = Math.max(
-        2,
-        chartH * clamp(height + failRate * 0.35, 0, 1)
-      );
-
-      ctx.div.fillStyle = mixedColor({
-        total: summary.total,
-        wrong: summary.wrong,
-        failRate,
-        avgTime: summary.avgTime
-      });
-
-      ctx.div.fillRect(
-        padL + (divisor - 1) * barW + 1,
-        padT + chartH - barH,
-        Math.max(1, barW - 2),
-        barH
-      );
-    }
+    canvas._layout = { op, spec, padL, padT, cellW, cellH };
   }
 
   function drawAllCharts() {
-    drawPairHeatmap(els.heatAdd, ctx.add, "+");
-    drawPairHeatmap(els.heatSub, ctx.sub, "-");
-    drawPairHeatmap(els.heatMul, ctx.mul, "*");
-    drawDivisionGraph();
+    drawHeatmap(els.heatAdd, "+");
+    drawHeatmap(els.heatSub, "-");
+    drawHeatmap(els.heatMul, "*");
+    drawHeatmap(els.heatDiv, "/");
   }
 
-  // ---------------------------------------------------------------------------
-  // Heatmap hover
-  // ---------------------------------------------------------------------------
-
-  function hitPairHeat(canvas, ev) {
-    const rect = canvas.getBoundingClientRect();
-    const maxN = getMaxN();
-    const pad = 26;
-
-    const b = Math.floor(
-      (ev.clientX - rect.left - pad) / ((rect.width - pad - 6) / maxN)
-    ) + 1;
-
-    const a = Math.floor(
-      (ev.clientY - rect.top - 4) / ((rect.height - pad - 6) / maxN)
-    ) + 1;
-
-    if (a < 1 || b < 1 || a > maxN || b > maxN) return null;
-
-    return { a, b };
-  }
-
-  function bindPairHover(canvas, op) {
+  function bindHover(canvas) {
     canvas.addEventListener("mousemove", ev => {
-      const hit = hitPairHeat(canvas, ev);
+      const L = canvas._layout;
+      if (!L) return;
 
-      if (!hit || (op === "-" && hit.a < hit.b)) {
+      const rect = canvas.getBoundingClientRect();
+      const ci = Math.floor((ev.clientX - rect.left - L.padL) / L.cellW);
+      const ri = Math.floor((ev.clientY - rect.top - L.padT) / L.cellH);
+      const r = L.spec.rows[ri];
+      const c = L.spec.cols[ci];
+      const pair = r != null && c != null ? L.spec.cell(r, c) : null;
+
+      if (!pair) {
         els.heatTip.classList.add("hidden");
         return;
       }
 
-      const summary = comboSummary(op, hit.a, hit.b);
+      const summary = comboSummary(L.op, pair.a, pair.b);
       const formula =
-        `${hit.a} ${OPS[op].symbol} ${hit.b} = ${correctFor(op, hit.a, hit.b)}`;
+        `${pair.a} ${OPS[L.op].symbol} ${pair.b} = ${correctFor(L.op, pair.a, pair.b)}`;
 
       els.heatTip.textContent = summary.total
-        ? `${formula} | n=${summary.total}, acc=${summary.acc}%, wrong=${summary.wrong}, avg=${fmtMs(summary.avgTime)}`
-        : `${formula} | no data`;
+        ? `${formula} | tries ${summary.total}, right ${summary.acc}%, avg ${fmtMs(summary.avgTime)}`
+        : `${formula} | not tried yet`;
 
       els.heatTip.classList.remove("hidden");
       els.heatTip.style.left = `${ev.clientX}px`;
@@ -907,6 +899,228 @@
     canvas.addEventListener("mouseleave", () => {
       els.heatTip.classList.add("hidden");
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Recent Practice ledger
+  // ---------------------------------------------------------------------------
+
+  const dayKey = t => new Date(t).toDateString();
+
+  const fmtDay = t => new Date(t).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short"
+  });
+
+  const fmtClock = t => new Date(t).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  function splitSessions(entries) {
+    const sessions = [];
+
+    entries.forEach(e => {
+      const last = sessions[sessions.length - 1];
+      const prev = last && last[last.length - 1];
+
+      if (prev && e.t - prev.t <= SESSION_GAP_MS && dayKey(e.t) === dayKey(prev.t)) {
+        last.push(e);
+      } else {
+        sessions.push([e]);
+      }
+    });
+
+    return sessions;
+  }
+
+  function entriesForPeriod() {
+    const all = log.map(logEntry);
+    if (!all.length) return [];
+
+    if (ledgerPeriod === "session") {
+      const sessions = splitSessions(all);
+      return sessions[sessions.length - 1];
+    }
+
+    const days = ledgerPeriod === "today" ? 1 : ledgerPeriod === "3d" ? 3 : 7;
+    const from = new Date();
+    from.setHours(0, 0, 0, 0);
+    from.setDate(from.getDate() - (days - 1));
+
+    return all.filter(e => e.t >= from.getTime());
+  }
+
+  function groupLabels(e) {
+    const labels = [];
+
+    if (e.op === "+" || e.op === "-") {
+      const word = e.op === "+" ? "Adding" : "Subtracting";
+      labels.push(crossesTen(e.op, e.a, e.b)
+        ? `${word}, crossing the ten`
+        : `${word}, no crossing`);
+    }
+
+    if (e.op === "+") labels.push(`Adding ${Math.min(e.a, e.b)}`);
+    if (e.op === "-") labels.push(`Taking away ${e.b}`);
+    if (e.op === "*") labels.push(`${e.b} times table`);
+    if (e.op === "/") labels.push(`Dividing by ${e.b}`);
+
+    return labels;
+  }
+
+  function groupStats(list) {
+    const okTimes = list.filter(e => e.ok).map(e => scoredMs(e.ms));
+    const right = list.filter(e => e.ok).length;
+
+    return {
+      n: list.length,
+      acc: pct(right, list.length),
+      avgTime: avg(okTimes)
+    };
+  }
+
+  function troubleScore(s) {
+    const slow = s.avgTime == null
+      ? 1
+      : clamp((s.avgTime - MS_GREEN) / (MS_YELLOW - MS_GREEN), 0, 1);
+
+    return (100 - s.acc) / 100 * 2 + slow;
+  }
+
+  function renderTroubleTable(entries) {
+    const groups = new Map();
+
+    entries.forEach(e => {
+      groupLabels(e).forEach(label => {
+        if (!groups.has(label)) groups.set(label, []);
+        groups.get(label).push(e);
+      });
+    });
+
+    const rows = Array.from(groups.entries())
+      .map(([label, list]) => ({ label, ...groupStats(list) }))
+      .filter(r => r.n >= 3)
+      .sort((x, y) => troubleScore(y) - troubleScore(x))
+      .slice(0, 10);
+
+    if (!rows.length) {
+      return `<div class="empty-note">Needs at least 3 tries of a kind of problem.</div>`;
+    }
+
+    const body = rows.map(r => {
+      const cls = r.acc < 80 ? "weak" : (r.avgTime ?? 0) > 8000 ? "slow" : "";
+
+      return `<tr class="${cls}"><td>${r.label}</td>` +
+        `<td class="num">${r.n}</td>` +
+        `<td class="num"><span class="accbar"><i style="width:${r.acc}%"></i></span>${r.acc}%</td>` +
+        `<td class="num">${fmtMs(r.avgTime)}</td></tr>`;
+    }).join("");
+
+    return `<table class="trouble"><thead><tr><th>Kind of problem</th><th>Tries</th><th>Right</th><th>Avg time</th></tr></thead><tbody>${body}</tbody></table>` +
+      `<div class="small-note">Hardest first. Red = under 80% right, orange = slow (over 8s).</div>`;
+  }
+
+  function renderMistakes(entries) {
+    const wrong = entries.filter(e => !e.ok);
+
+    if (!wrong.length) {
+      return `<div class="empty-note">No mistakes in this period. 🎉</div>`;
+    }
+
+    const kinds = { one: 0, ten: 0, other: 0 };
+
+    wrong.forEach(e => {
+      const d = Math.abs(e.ans - e.correct);
+      if (d === 1) kinds.one++;
+      else if (d === 10) kinds.ten++;
+      else kinds.other++;
+    });
+
+    const byFact = new Map();
+
+    entries.forEach(e => {
+      const k = keyFor(e.op, e.a, e.b);
+      if (!byFact.has(k)) byFact.set(k, []);
+      byFact.get(k).push(e);
+    });
+
+    const missed = Array.from(byFact.values())
+      .map(list => ({ list, wrong: list.filter(e => !e.ok).length }))
+      .filter(f => f.wrong > 0)
+      .sort((x, y) => y.wrong - x.wrong || y.list.length - x.list.length)
+      .slice(0, 10)
+      .map(({ list }) => {
+        const e = list[0];
+        const marks = list
+          .map(x => (x.ok ? `<span class="mk-ok">✓</span>` : `<span class="mk-bad">✗</span>`))
+          .join("");
+
+        return `<div>${e.a} ${OPS[e.op].symbol} ${e.b} = ${e.correct}<span class="marks">${marks}</span></div>`;
+      })
+      .join("");
+
+    return `<div class="missed">${missed}</div>` +
+      `<div class="small-note">Wrong answers: ${kinds.one} off by 1, ${kinds.ten} off by 10, ${kinds.other} other.` +
+      (kinds.ten ? " Off by 10 often means a slip when crossing the ten." : "") +
+      (kinds.one ? " Off by 1 often means counting slips." : "") +
+      `</div>`;
+  }
+
+  function chipHtml(e) {
+    const sym = OPS[e.op].symbol;
+    const slow = e.ok && e.ms > 8000;
+    const cls = e.ok ? (slow ? "chip slow" : "chip") : "chip bad";
+    const title = `${fmtClock(e.t)} · ${fmtMs(e.ms)}`;
+    const answer = e.ok ? `${e.correct}` : `<s>${e.ans}</s> ${e.correct}`;
+
+    return `<span class="${cls}" title="${title}">${e.a} ${sym} ${e.b} = ${answer}<small>${fmtMs(scoredMs(e.ms))}</small></span>`;
+  }
+
+  function renderLedgerList(entries) {
+    const sessions = splitSessions(entries).reverse();
+    let html = "";
+    let lastDay = null;
+
+    sessions.forEach(s => {
+      const day = dayKey(s[0].t);
+
+      if (day !== lastDay) {
+        html += `<div class="day-head">${fmtDay(s[0].t)}</div>`;
+        lastDay = day;
+      }
+
+      const st = groupStats(s);
+
+      html += `<div class="session-head">${fmtClock(s[0].t)}–${fmtClock(s[s.length - 1].t)} · ` +
+        `${st.n} problems · ${st.acc}% right · avg ${fmtMs(st.avgTime)}</div>` +
+        `<div class="chips">${s.map(chipHtml).join("")}</div>`;
+    });
+
+    return html;
+  }
+
+  function renderLedger() {
+    if (els.ledgerWrap.classList.contains("hidden")) return;
+
+    const entries = entriesForPeriod();
+
+    if (!entries.length) {
+      els.ledgerBody.innerHTML =
+        `<div class="empty-note">No practice recorded in this period yet.</div>`;
+      return;
+    }
+
+    const st = groupStats(entries);
+
+    els.ledgerBody.innerHTML =
+      `<div class="ledger-summary">${st.n} problems · ${st.acc}% right · average ${fmtMs(st.avgTime)}</div>` +
+      `<div class="ledger-cols">` +
+      `<div class="ledger-box"><h3>Trouble spots</h3>${renderTroubleTable(entries)}</div>` +
+      `<div class="ledger-box"><h3>Most missed</h3>${renderMistakes(entries)}</div>` +
+      `</div>` +
+      renderLedgerList(entries);
   }
 
   // ---------------------------------------------------------------------------
@@ -924,7 +1138,7 @@
 
     els.answers.innerHTML = "";
 
-    buildChoices(problem.correct, problem.op, problem.maxN).forEach(value => {
+    buildChoices(problem).forEach(value => {
       const btn = document.createElement("button");
 
       btn.type = "button";
@@ -960,35 +1174,38 @@
     const selected = Number(e.currentTarget.dataset.value);
     const ok = selected === current.correct;
 
-    recordAttempt(current.op, current.a, current.b, ok, rawMs);
-
-    sessionAttempts.push({
-      op: current.op,
-      a: current.a,
-      b: current.b,
-      ms: ok ? rawMs : FAIL_TIME,
-      scored: ok ? scoredMs(rawMs) : FAIL_TIME,
-      ok,
-      correct: current.correct
-    });
-
-    renderResults();
+    recordAttempt(current.op, current.a, current.b, selected, rawMs);
     lockButtons();
 
     if (ok) {
-      streak++;
       addStarProgress(rewardGain(rawMs));
       setFeedback(`✅ Correct! (${fmtMs(scoredMs(rawMs))})`, "good");
     } else {
-      streak = 0;
       starProgress = Math.max(0, starProgress - WRONG_PENALTY);
       setFeedback(`❌ Oops! Correct answer is ${current.correct}`, "bad");
     }
 
-    renderStats();
+    refreshPanels();
     renderRewardCluster();
 
     setTimeout(nextProblem, 800);
+  }
+
+  function refreshPanels() {
+    renderResults();
+    renderLedger();
+    drawAllCharts();
+  }
+
+  function settingsChanged() {
+    prevProblemKey = null;
+    selectedQuestionSet();
+    renderRangeUi();
+    saveSettings();
+
+    if (started) nextProblem();
+
+    refreshPanels();
   }
 
   // ---------------------------------------------------------------------------
@@ -1000,9 +1217,7 @@
       await navigator.clipboard.writeText(
         JSON.stringify(Object.fromEntries(histMap.entries()), null, 2)
       );
-
-      setFeedback("📋 History copied!", "good");
-      setTimeout(() => setFeedback("", null), 900);
+      flash("📋 History copied!", "good");
     } catch {
       els.resultsWrap.classList.remove("hidden");
       els.btnToggleResults.textContent = "Hide";
@@ -1010,20 +1225,29 @@
   }
 
   function ensureOneOperation(btn) {
-    const hasActive = els.opButtons.querySelectorAll(".op-toggle.active").length;
-
-    if (hasActive) return;
+    if (els.opButtons.querySelectorAll(".op-toggle.active").length) return;
 
     btn.classList.add("active");
-
-    setFeedback("Pick at least one operation.", "bad");
-    setTimeout(() => setFeedback("", null), 900);
+    flash("Pick at least one operation.", "bad");
   }
 
   function toggleSection(section, button) {
     const hidden = section.classList.toggle("hidden");
     button.textContent = hidden ? "Show" : "Hide";
     return hidden;
+  }
+
+  function commitNumberInput(input, which) {
+    const n = parseInt(input.value, 10);
+    const { lo, hi } = getRange();
+
+    if (Number.isFinite(n)) {
+      if (which === "lo") setRange(n, Math.max(n, hi));
+      else setRange(Math.min(lo, n), n);
+      settingsChanged();
+    } else {
+      renderRangeUi();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1033,33 +1257,50 @@
   els.btnStart.addEventListener("click", startGame);
 
   els.btnClearHistory.addEventListener("click", () => {
+    if (!confirm("Delete all saved practice history on this computer?")) return;
+
     clearHistory();
-    renderResults();
-    renderStats();
-
-    setFeedback("Saved history cleared.", "good");
-    setTimeout(() => setFeedback("", null), 900);
+    refreshPanels();
+    flash("Saved history cleared.", "good");
   });
 
-  els.difficulty.addEventListener("change", () => {
-    prevProblemKey = null;
-
-    if (started) nextProblem();
-
-    renderStats();
+  els.rangeLo.addEventListener("input", () => {
+    if (Number(els.rangeLo.value) > Number(els.rangeHi.value)) {
+      els.rangeLo.value = els.rangeHi.value;
+    }
+    renderRangeUi();
   });
 
-  els.theme.addEventListener("change", () => {
-    applyTheme(els.theme.value);
+  els.rangeHi.addEventListener("input", () => {
+    if (Number(els.rangeHi.value) < Number(els.rangeLo.value)) {
+      els.rangeHi.value = els.rangeLo.value;
+    }
+    renderRangeUi();
   });
+
+  els.rangeLo.addEventListener("change", settingsChanged);
+  els.rangeHi.addEventListener("change", settingsChanged);
+
+  [[els.numLo, "lo"], [els.numHi, "hi"]].forEach(([input, which]) => {
+    input.addEventListener("focus", () => input.select());
+    input.addEventListener("change", () => commitNumberInput(input, which));
+    input.addEventListener("keydown", ev => {
+      if (ev.key === "Enter") input.blur();
+      if (ev.key === "Escape") {
+        renderRangeUi();
+        input.blur();
+      }
+    });
+    input.addEventListener("blur", () => renderRangeUi());
+  });
+
+  els.tenOnly.addEventListener("change", settingsChanged);
+
+  els.theme.addEventListener("change", () => applyTheme(els.theme.value));
 
   els.btnSound.addEventListener("click", () => {
     soundOn = !soundOn;
-
-    try {
-      localStorage.setItem(SOUND_KEY, soundOn ? "on" : "off");
-    } catch {}
-
+    storageSet(SOUND_KEY, soundOn ? "on" : "off");
     updateSoundButton();
   });
 
@@ -1069,12 +1310,23 @@
 
     btn.classList.toggle("active");
     ensureOneOperation(btn);
+    settingsChanged();
+  });
 
-    prevProblemKey = null;
+  els.periodButtons.addEventListener("click", e => {
+    const btn = e.target.closest(".period");
+    if (!btn) return;
 
-    if (started) nextProblem();
+    ledgerPeriod = btn.dataset.period;
+    els.periodButtons.querySelectorAll(".period").forEach(b => {
+      b.classList.toggle("active", b === btn);
+    });
+    renderLedger();
+  });
 
-    renderStats();
+  els.btnToggleLedger.addEventListener("click", () => {
+    toggleSection(els.ledgerWrap, els.btnToggleLedger);
+    renderLedger();
   });
 
   els.btnToggleResults.addEventListener("click", () => {
@@ -1090,9 +1342,7 @@
 
   window.addEventListener("resize", drawAllCharts);
 
-  bindPairHover(els.heatAdd, "+");
-  bindPairHover(els.heatSub, "-");
-  bindPairHover(els.heatMul, "*");
+  [els.heatAdd, els.heatSub, els.heatMul, els.heatDiv].forEach(bindHover);
 
   // ---------------------------------------------------------------------------
   // Init
@@ -1100,12 +1350,12 @@
 
   initSound();
   updateSoundButton();
-  applyTheme(localStorage.getItem(THEME_KEY) || "standard");
+  loadSettings();
+  selectedQuestionSet();
+  renderRangeUi();
+  applyTheme(storageGet(THEME_KEY) || "standard");
 
-  renderResults();
-  renderStats();
-  drawAllCharts();
-
+  refreshPanels();
   rewardLoop();
 
   els.startOverlay.classList.remove("hidden");
