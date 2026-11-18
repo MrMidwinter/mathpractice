@@ -938,3 +938,252 @@ canvas {
 .dot.o { background: rgb(249, 115, 22); }
 .dot.r { background: rgb(239, 68, 68); }
 .dot.n { background: rgba(128, 128, 128, 0.25); }
+
+/* -------------------------------------------------------------------------- */
+/* Goals / reward layers */
+/* -------------------------------------------------------------------------- */
+
+.run-line {
+  min-height: 18px;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--accent);
+}
+
+.goals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.goal-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+  text-align: left;
+  color: var(--text);
+  font: inherit;
+  font-weight: 900;
+}
+
+.goal-tile.clickable {
+  cursor: pointer;
+}
+
+
+.gt-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gt-main {
+  font-size: 22px;
+  font-weight: 1000;
+  line-height: 1.1;
+}
+
+.gt-main.small {
+  font-size: 16px;
+}
+
+.gt-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.2);
+  overflow: hidden;
+}
+
+.gt-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+
+.gt-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gt-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.gt-dots span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+}
+
+.gt-dots span.met {
+  background: var(--good);
+  border-color: var(--good);
+}
+
+.gt-dots span.today {
+  border-color: var(--accent);
+}
+
+/* Toasts */
+
+.toasts {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  width: min(420px, calc(100% - 32px));
+}
+
+@media (min-width: 1000px) {
+  .toasts {
+    left: auto;
+    right: 16px;
+    transform: none;
+    width: 340px;
+  }
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 18px;
+  border: 2px solid #facc15;
+  background: var(--selectBg);
+  color: var(--text);
+  box-shadow: 0 12px 40px var(--shadow);
+  font-size: 17px;
+  font-weight: 1000;
+  animation: toastIn 0.35s cubic-bezier(.2, 1.4, .4, 1);
+}
+
+.toast .big {
+  font-size: 38px;
+  line-height: 1;
+}
+
+.toast.out {
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all 0.4s ease;
+}
+
+@keyframes toastIn {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Modals */
+
+.overlay-card.wide {
+  width: min(640px, 100%);
+}
+
+.overlay-card {
+  background: var(--selectBg);
+}
+
+.start-btn.small {
+  margin-top: 14px;
+  padding: 10px;
+  font-size: 18px;
+}
+
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.sticker-grid span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  font-size: 32px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.sticker-grid span.locked {
+  font-size: 18px;
+  opacity: 0.35;
+}
+
+
+
+
+
+
+/* Grown-up settings */
+
+.parent-card {
+  margin: 10px 0 14px;
+  padding: 12px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--panel2);
+}
+
+.parent-row {
+  display: block;
+  margin-top: 12px;
+  font-weight: 800;
+}
+
+.parent-h {
+  margin: 16px 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.goal-input {
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--selectBg);
+  color: var(--selectText);
+  font: inherit;
+  font-weight: 800;
+}
+
+.goal-input {
+  width: 70px;
+}
+
+
+
+
+
+
+
+.parent-actions {
+  margin-top: 14px;
+}
+
+@media (max-width: 760px) {
+  .goals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

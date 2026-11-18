@@ -24,7 +24,23 @@
 
   const MAX_GAIN = 1 / 3;
   const MIN_GAIN = 0.05;
-  const WRONG_PENALTY = 0.25;
+  const WRONG_PENALTY = 0.1;
+  const COMEBACK_BONUS = 0.2;
+
+  // Reward layers
+  const REWARDS_KEY = "mathPractice_rewards_v1";
+  const MASTER_MS = 6000;          // last 3 answers right and each under 6 s
+  const STARS_PER_STICKER = 5;
+  const RECORD_MIN = 5;            // don't celebrate records shorter than this
+  const DEFAULT_GOAL = 20;
+
+
+  const STICKERS = [
+    "🐶", "🐱", "🦊", "🐼", "🐨", "🦁", "🐯", "🐸", "🐵", "🦄",
+    "🐙", "🦋", "🐢", "🐬", "🦖", "🐝", "🐞", "🦉", "🐧", "🐰",
+    "🐹", "🐻", "🐮", "🐷", "🦒", "🦓", "🐘", "🦔", "🦦", "🐳",
+    "🦜", "🦩", "🐲", "🦕", "🐠", "🦀", "🐌", "🦚", "🐿️", "🦥"
+  ];
 
   const RANGE_MIN = 1;
   const RANGE_MAX = 100;
@@ -157,6 +173,28 @@
     starFill: $("starFill"),
     starGhost: $("starGhost"),
 
+    runLine: $("runLine"),
+    todayMain: $("todayMain"),
+    todayBar: $("todayBar"),
+    todayDots: $("todayDots"),
+    todaySub: $("todaySub"),
+    masteryMain: $("masteryMain"),
+    masteryBar: $("masteryBar"),
+    masterySub: $("masterySub"),
+    tileStickers: $("tileStickers"),
+    stickerMain: $("stickerMain"),
+    stickerBar: $("stickerBar"),
+    stickerSub: $("stickerSub"),
+    toasts: $("toasts"),
+    stickerModal: $("stickerModal"),
+    stickerInfo: $("stickerInfo"),
+    stickerGrid: $("stickerGrid"),
+
+    btnToggleParent: $("btnToggleParent"),
+    parentWrap: $("parentWrap"),
+    goalInput: $("goalInput"),
+    btnResetRewards: $("btnResetRewards"),
+
     btnToggleLedger: $("btnToggleLedger"),
     ledgerWrap: $("ledgerWrap"),
     ledgerBody: $("ledgerBody"),
@@ -195,8 +233,12 @@
   let ledgerPeriod = "session";
   let tenFallback = false;
 
+  let run = 0;                 // right answers in a row this session
+  let recordAnnounced = false; // celebrate a new record once per session
+
   const histMap = loadHistMap();
   const log = loadLog();
+  const rw = loadRewards();
 
   // ---------------------------------------------------------------------------
   // Time / scoring
@@ -582,6 +624,8 @@
       if (candidate >= 0) options.add(candidate);
     }
 
+    for (let v = 0; options.size < targetCount; v++) options.add(v);
+
     return shuffle(Array.from(options));
   }
 
@@ -678,6 +722,7 @@
     while (starProgress >= 1) {
       sessionStars++;
       starProgress -= 1;
+      onStarEarned();
 
       playRewardSound();
 
@@ -1124,6 +1169,200 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Reward layers: daily goal, mastery, stickers, record
+  // ---------------------------------------------------------------------------
+
+  function loadRewards() {
+    const s = safeParse(storageGet(REWARDS_KEY), {});
+    const num = (v, d) => (Number.isFinite(v) ? v : d);
+
+
+    return {
+      lifetime: num(s.lifetime, 0),
+      stickers: Array.isArray(s.stickers) ? s.stickers.filter(x => STICKERS.includes(x)) : [],
+      bestRun: num(s.bestRun, 0),
+      goal: num(s.goal, DEFAULT_GOAL)
+    };
+  }
+
+  function saveRewards() {
+    storageSet(REWARDS_KEY, JSON.stringify(rw));
+  }
+
+  function onStarEarned() {
+    rw.lifetime++;
+
+    if (rw.lifetime % STARS_PER_STICKER === 0) unlockSticker();
+
+    saveRewards();
+  }
+
+  function unlockSticker() {
+    const left = STICKERS.filter(x => !rw.stickers.includes(x));
+    if (!left.length) return;
+
+    const sticker = left[randInt(0, left.length - 1)];
+    rw.stickers.push(sticker);
+    saveRewards();
+
+    toast(sticker, left.length === 1
+      ? "The last sticker! Your book is complete!"
+      : "New sticker for your book!");
+  }
+
+  function isMastered(op, a, b) {
+    const last = getTimes(op, a, b).slice(-3);
+    return last.length === 3 && last.every(ms => !isFail(ms) && ms <= MASTER_MS);
+  }
+
+  function correctByDay() {
+    const days = new Map();
+
+    log.forEach(e => {
+      const entry = logEntry(e);
+      if (!entry.ok) return;
+      const k = dayKey(entry.t);
+      days.set(k, (days.get(k) || 0) + 1);
+    });
+
+    return days;
+  }
+
+  function correctToday() {
+    const today = dayKey(Date.now());
+    const from = new Date();
+    from.setHours(0, 0, 0, 0);
+
+    let n = 0;
+    for (let i = log.length - 1; i >= 0 && log[i][0] >= from.getTime(); i--) {
+      if (dayKey(log[i][0]) === today && logEntry(log[i]).ok) n++;
+    }
+    return n;
+  }
+
+  function dayStreak(days) {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+
+    // Today only counts once the goal is met; until then the streak is still alive.
+    if ((days.get(d.toDateString()) || 0) < rw.goal) d.setDate(d.getDate() - 1);
+
+    let streak = 0;
+    while ((days.get(d.toDateString()) || 0) >= rw.goal) {
+      streak++;
+      d.setDate(d.getDate() - 1);
+    }
+    return streak;
+  }
+
+  function renderGoals() {
+    // Today + streak
+    const days = correctByDay();
+    const today = correctToday();
+    const streak = dayStreak(days);
+
+    els.todayMain.textContent = `${Math.min(today, rw.goal)} / ${rw.goal}${today >= rw.goal ? " ✓" : ""}`;
+    els.todayBar.style.width = `${Math.min(100, (today / rw.goal) * 100)}%`;
+
+    let dots = "";
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const met = (days.get(d.toDateString()) || 0) >= rw.goal;
+      const label = d.toLocaleDateString(undefined, { weekday: "short" });
+      dots += `<span class="${met ? "met" : ""}${i === 0 ? " today" : ""}" title="${label}"></span>`;
+    }
+    els.todayDots.innerHTML = dots;
+    els.todaySub.textContent = streak > 0
+      ? `🔥 ${streak} day${streak === 1 ? "" : "s"} in a row`
+      : "Meet the goal to start a streak";
+
+    // Mastery
+    const items = selectedQuestionSet();
+    const mastered = items.filter(i => isMastered(i.op, i.a, i.b)).length;
+    let total = 0;
+    histMap.forEach((_, key) => {
+      const [op, pair] = key.split(":");
+      const [a, b] = pair.split(",").map(Number);
+      if (isMastered(op, a, b)) total++;
+    });
+
+    els.masteryMain.textContent = `${mastered} / ${items.length}`;
+    els.masteryBar.style.width = `${pct(mastered, items.length)}%`;
+    els.masterySub.textContent = `in this range · ${total} in total`;
+
+    // Stickers
+    const owned = rw.stickers.length;
+    const toNext = STARS_PER_STICKER - (rw.lifetime % STARS_PER_STICKER);
+
+    els.stickerMain.textContent = owned
+      ? `${rw.stickers.slice(-4).join("")} ${owned}/${STICKERS.length}`
+      : `0 / ${STICKERS.length}`;
+    els.stickerBar.style.width = `${((STARS_PER_STICKER - toNext) / STARS_PER_STICKER) * 100}%`;
+    els.stickerSub.textContent = owned >= STICKERS.length
+      ? "Book complete! 🎉"
+      : `Next sticker in ${toNext} ⭐`;
+
+    // Run / record
+    els.runLine.textContent = run >= 2
+      ? `${run} right in a row! (record ${Math.max(rw.bestRun, run)})`
+      : rw.bestRun >= RECORD_MIN ? `Record: ${rw.bestRun} right in a row` : "";
+  }
+
+  function toast(icon, text) {
+    const div = document.createElement("div");
+    div.className = "toast";
+
+    const big = document.createElement("span");
+    big.className = "big";
+    big.textContent = icon;
+
+    const msg = document.createElement("span");
+    msg.textContent = text;
+
+    div.append(big, msg);
+    els.toasts.appendChild(div);
+
+    while (els.toasts.children.length > 3) els.toasts.firstChild.remove();
+
+    setTimeout(() => div.classList.add("out"), 2800);
+    setTimeout(() => div.remove(), 3300);
+  }
+
+  function openModal(modal) {
+    modal.classList.remove("hidden");
+  }
+
+  function closeModals() {
+    els.stickerModal.classList.add("hidden");
+  }
+
+  function renderStickerBook() {
+    const toNext = STARS_PER_STICKER - (rw.lifetime % STARS_PER_STICKER);
+
+    els.stickerInfo.textContent =
+      `${rw.stickers.length} of ${STICKERS.length} collected · next sticker in ${toNext} ⭐ · bonus sticker for every daily goal`;
+
+    els.stickerGrid.innerHTML = "";
+    rw.stickers.forEach(x => {
+      const span = document.createElement("span");
+      span.textContent = x;
+      els.stickerGrid.appendChild(span);
+    });
+
+    for (let i = rw.stickers.length; i < STICKERS.length; i++) {
+      const span = document.createElement("span");
+      span.className = "locked";
+      span.textContent = "?";
+      els.stickerGrid.appendChild(span);
+    }
+  }
+
+  function renderParent() {
+    els.goalInput.value = rw.goal;
+  }
+
+  // ---------------------------------------------------------------------------
   // Game rendering / flow
   // ---------------------------------------------------------------------------
 
@@ -1173,19 +1412,52 @@
     const rawMs = Math.round(performance.now() - startTime);
     const selected = Number(e.currentTarget.dataset.value);
     const ok = selected === current.correct;
+    const { op, a, b } = current;
 
-    recordAttempt(current.op, current.a, current.b, selected, rawMs);
+    const prevTimes = getTimes(op, a, b);
+    const missedLastTime = prevTimes.length > 0 && isFail(prevTimes[prevTimes.length - 1]);
+    const wasMastered = isMastered(op, a, b);
+    const todayBefore = correctToday();
+
+    recordAttempt(op, a, b, selected, rawMs);
     lockButtons();
 
     if (ok) {
-      addStarProgress(rewardGain(rawMs));
-      setFeedback(`✅ Correct! (${fmtMs(scoredMs(rawMs))})`, "good");
+      run++;
+
+      if (missedLastTime) {
+        addStarProgress(rewardGain(rawMs) + COMEBACK_BONUS);
+        setFeedback("💪 Yes! You got one you missed before!", "good");
+      } else {
+        addStarProgress(rewardGain(rawMs));
+        setFeedback(`✅ Correct! (${fmtMs(scoredMs(rawMs))})`, "good");
+      }
+
+      if (!wasMastered && isMastered(op, a, b)) {
+        toast("🏅", `Mastered ${a} ${OPS[op].symbol} ${b} = ${current.correct}!`);
+      }
+
+      if (run > rw.bestRun) {
+        if (!recordAnnounced && run >= RECORD_MIN && rw.bestRun > 0) {
+          toast("🔥", `New record: ${run} right in a row!`);
+          recordAnnounced = true;
+        }
+        rw.bestRun = run;
+        saveRewards();
+      }
+
+      if (todayBefore < rw.goal && correctToday() >= rw.goal) {
+        toast("🎯", "Daily goal done! Here's a bonus sticker.");
+        unlockSticker();
+      }
     } else {
+      run = 0;
       starProgress = Math.max(0, starProgress - WRONG_PENALTY);
       setFeedback(`❌ Oops! Correct answer is ${current.correct}`, "bad");
     }
 
     refreshPanels();
+    renderGoals();
     renderRewardCluster();
 
     setTimeout(nextProblem, 800);
@@ -1206,6 +1478,7 @@
     if (started) nextProblem();
 
     refreshPanels();
+    renderGoals();
   }
 
   // ---------------------------------------------------------------------------
@@ -1261,7 +1534,43 @@
 
     clearHistory();
     refreshPanels();
+    renderGoals();
     flash("Saved history cleared.", "good");
+  });
+
+  els.tileStickers.addEventListener("click", () => {
+    renderStickerBook();
+    openModal(els.stickerModal);
+  });
+
+  [els.stickerModal].forEach(modal => {
+    modal.addEventListener("click", e => {
+      if (e.target === modal || e.target.closest("[data-close]")) closeModals();
+    });
+  });
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") closeModals();
+  });
+
+  els.btnToggleParent.addEventListener("click", () => {
+    toggleSection(els.parentWrap, els.btnToggleParent);
+    renderParent();
+  });
+
+  els.goalInput.addEventListener("change", () => {
+    rw.goal = clamp(parseInt(els.goalInput.value, 10) || DEFAULT_GOAL, 1, 500);
+    els.goalInput.value = rw.goal;
+    saveRewards();
+    renderGoals();
+  });
+
+  els.btnResetRewards.addEventListener("click", () => {
+    if (!confirm("Reset stickers and the in-a-row record? (Practice history is kept.)")) return;
+
+    Object.assign(rw, { lifetime: 0, stickers: [], bestRun: 0 });
+    saveRewards();
+    renderGoals();
   });
 
   els.rangeLo.addEventListener("input", () => {
@@ -1356,6 +1665,7 @@
   applyTheme(storageGet(THEME_KEY) || "standard");
 
   refreshPanels();
+  renderGoals();
   rewardLoop();
 
   els.startOverlay.classList.remove("hidden");

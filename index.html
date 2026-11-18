@@ -37,7 +37,14 @@
         <div id="rewardCluster" class="reward-cluster" aria-live="polite"></div>
         <div class="starbar" aria-hidden="true"><div id="starFill" class="star-fill"></div><div id="starGhost" class="star-ghost"></div></div>
         <div class="star-hint">Fill the bar to earn a star. Fast correct answers fill more.</div>
+        <div id="runLine" class="run-line"></div>
       </div>
+
+      <section class="goals" aria-label="Goals">
+        <div class="goal-tile"><div class="gt-label">Today's goal</div><div id="todayMain" class="gt-main">0 / 20</div><div class="gt-bar"><i id="todayBar"></i></div><div id="todayDots" class="gt-dots"></div><div id="todaySub" class="gt-sub"></div></div>
+        <div class="goal-tile"><div class="gt-label">Mastered</div><div id="masteryMain" class="gt-main">0 / 0</div><div class="gt-bar"><i id="masteryBar"></i></div><div id="masterySub" class="gt-sub"></div></div>
+        <button id="tileStickers" type="button" class="goal-tile clickable"><div class="gt-label">Sticker book</div><div id="stickerMain" class="gt-main">0</div><div class="gt-bar"><i id="stickerBar"></i></div><div id="stickerSub" class="gt-sub"></div></button>
+      </section>
 
       <section class="ledger-card">
         <div class="section-head"><div><h2>Recent Practice</h2><div class="section-sub">What was practised, and which kinds of problems cause trouble.</div></div><button id="btnToggleLedger" type="button" class="secondary">Show</button></div>
@@ -53,8 +60,20 @@
         <div id="heatTip" class="heat-tip hidden"></div>
       </section>
 
+      <section class="parent-card">
+        <div class="section-head"><div><h2>Grown-up Settings</h2><div class="section-sub">Daily goal and resets.</div></div><button id="btnToggleParent" type="button" class="secondary">Show</button></div>
+        <div id="parentWrap" class="hidden">
+          <label class="parent-row">Daily goal: <input id="goalInput" class="goal-input" type="number" min="1" max="500"> correct answers a day</label>
+          <div class="parent-actions"><button id="btnResetRewards" type="button" class="secondary">Reset stickers &amp; record</button></div>
+        </div>
+      </section>
+
       <section class="results"><div class="results-head"><div><h2>Stored History</h2><div id="historySub" class="section-sub">Raw times are stored. Failed attempts are stored as -1.</div></div><div class="results-actions"><button id="btnToggleResults" type="button" class="secondary">Show</button><button id="btnCopy" type="button" class="secondary">Copy</button><button id="btnClearHistory" type="button" class="secondary">Clear Saved</button></div></div><div id="resultsWrap" class="hidden"><div class="hint">Format: <code>{ "+:a,b": [ms, ...], "-:a,b": [ms, ...], "*:a,b": [ms, ...], "/:dividend,divisor": [ms, ...] }</code></div><pre id="resultsPre" class="pre">{}</pre></div></section>
     </main>
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
+    <div id="stickerModal" class="overlay hidden"><div class="overlay-card wide"><div class="overlay-title">Sticker book</div><div id="stickerInfo" class="overlay-sub"></div><div id="stickerGrid" class="sticker-grid"></div><button type="button" class="start-btn small" data-close>Close</button></div></div>
+
     <footer class="foot"><small>By Lilith &amp; Dad, Creative Commons (CC) license</small></footer>
   </div>
 </body>
